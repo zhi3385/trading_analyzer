@@ -218,9 +218,9 @@
                 </div>
               </label>
               <label class="block">
-                <span class="mb-2 block text-sm font-semibold text-slate-700">IV (optional)</span>
+                <span class="mb-2 block text-sm font-semibold text-slate-700">IV</span>
                 <div class="relative">
-                  <input id="ivInput" name="iv" type="text" inputmode="decimal" placeholder="25" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-base font-semibold shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+                  <input id="ivInput" name="iv" type="text" inputmode="decimal" value="25" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-base font-semibold shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
                   <span class="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 font-mono text-sm text-slate-400">%</span>
                 </div>
               </label>
@@ -235,7 +235,7 @@
             </label>
 
             <div class="rounded-2xl border border-dashed border-slate-300 bg-white/50 p-4 text-sm text-slate-600">
-              Premium and P/L require a user-supplied IV. Without IV, the analyzer still reports each historical call as assigned or expired OTM.
+              IV is required because premium, trade P/L, cumulative P/L, and the hold comparison all depend on the option value estimate.
             </div>
 
             <div class="flex flex-col gap-3 sm:flex-row">
@@ -584,15 +584,15 @@
       }
     }
 
-    function parseOptionalPercentInput(rawValue) {
+    function parseRequiredPercentInput(rawValue) {
       const trimmed = rawValue.trim();
       if (!trimmed) {
-        return null;
+        throw new Error('IV is required.');
       }
 
       const normalized = trimmed.replace(/,/g, '');
       if (!/^(?:\d+|\d+\.\d+|\.\d+)$/.test(normalized)) {
-        throw new Error('IV must be a valid positive number when provided.');
+        throw new Error('IV must be a valid positive number.');
       }
 
       return Number.parseFloat(normalized) / 100;
@@ -605,7 +605,7 @@
         endDate: parseDateInput(els.endDate.value),
         expirationPreset: els.expirationPreset.value,
         otmPercent: Number.parseFloat(els.otm.value),
-        iv: parseOptionalPercentInput(els.iv.value),
+        iv: parseRequiredPercentInput(els.iv.value),
         riskFreeRate: Number.parseFloat(els.rate.value) / 100
       };
     }
@@ -644,7 +644,7 @@
         if (saved.otmPercent !== undefined) {
           els.otm.value = saved.otmPercent;
         }
-        if (saved.iv !== undefined) {
+        if (saved.iv !== undefined && saved.iv !== '') {
           els.iv.value = saved.iv;
         }
         if (saved.riskFreeRate !== undefined) {
@@ -789,14 +789,14 @@
           note: `${Math.max(result.trades.length - result.assignmentCount, 0)} kept the shares`
         },
         {
-          label: 'Premium Collected',
-          value: result.premiumEnabled ? formatMoney(result.totalPremium) : 'Status only',
-          note: result.premiumEnabled ? `${formatVolPercent(settings.iv)} constant IV model` : 'IV not provided'
+          label: 'Total P/L',
+          value: formatSignedMoney(result.totalCoveredCallPL),
+          note: `Covered call strategy ending P/L<div class="mt-2 text-xs font-mono uppercase tracking-[0.16em] text-slate-500">Premium collected ${formatMoney(result.totalPremium)}</div>`
         },
         {
           label: 'Covered Call vs Hold',
-          value: result.premiumEnabled ? formatSignedMoney(result.differenceVsHold) : 'Status only',
-          note: result.premiumEnabled ? `${formatMoney(result.totalCoveredCallPL)} vs ${formatMoney(result.totalHoldPL)}` : 'P/L not modeled without IV'
+          value: formatSignedMoney(result.differenceVsHold),
+          note: `${formatMoney(result.totalCoveredCallPL)} vs ${formatMoney(result.totalHoldPL)}`
         }
       ];
 
@@ -804,7 +804,7 @@
         <article class="metric-card glass rounded-[1.5rem] p-5">
           <p class="font-mono text-xs uppercase tracking-[0.2em] text-slate-500">${card.label}</p>
           <p class="mt-4 font-display text-3xl font-bold tracking-tight text-ink">${card.value}</p>
-          <p class="mt-2 text-sm text-slate-600">${card.note}</p>
+          <div class="mt-2 text-sm text-slate-600">${card.note}</div>
         </article>
       `).join('');
 
@@ -825,17 +825,11 @@
         },
         {
           title: 'Valuation mode',
-          lines: result.premiumEnabled
-            ? [
-                `IV: ${formatVolPercent(settings.iv)}`,
-                `Risk-free rate: ${formatPercent(settings.riskFreeRate * 100)}`,
-                'Black-Scholes call estimate using target expiration'
-              ]
-            : [
-                'Status-only mode',
-                'IV not provided',
-                'Premium and P/L are not modeled'
-              ]
+          lines: [
+            `IV: ${formatVolPercent(settings.iv)}`,
+            `Risk-free rate: ${formatPercent(settings.riskFreeRate * 100)}`,
+            'Black-Scholes call estimate using target expiration'
+          ]
         },
         {
           title: 'Benchmark',
@@ -847,18 +841,12 @@
         },
         {
           title: 'Upside trade-off',
-          lines: result.premiumEnabled
-            ? [
-                `Missed upside vs hold: ${formatMoney(result.missedUpside)}`,
-                `Upside lost at assigned expirations: ${formatMoney(result.cappedUpsideAtExpiration)}`,
-                'Positive values indicate capped upside cost',
-                'Zero means strategy did not trail hold'
-              ]
-            : [
-                'Unavailable without IV',
-                'Premium is required for total strategy P/L',
-                'Status history remains valid'
-              ]
+          lines: [
+            `Missed upside vs hold: ${formatMoney(result.missedUpside)}`,
+            `Upside lost at assigned expirations: ${formatMoney(result.cappedUpsideAtExpiration)}`,
+            'Positive values indicate capped upside cost',
+            'Zero means strategy did not trail hold'
+          ]
         }
       ];
 
@@ -872,24 +860,26 @@
       const totalTrades = Math.max(result.trades.length, 1);
       const assignedWidth = (result.assignmentCount / totalTrades) * 100;
       const otmWidth = (result.otmCount / totalTrades) * 100;
+      const assignedLabel = formatPercent(assignedWidth);
+      const otmLabel = formatPercent(otmWidth);
 
       els.statusBreakdown.innerHTML = `
         <div>
           <div class="mb-2 flex items-center justify-between text-sm font-semibold text-slate-700">
             <span>Assigned</span>
-            <span>${result.assignmentCount} trades</span>
+            <span>${result.assignmentCount} trades · ${assignedLabel}</span>
           </div>
           <div class="h-4 overflow-hidden rounded-full bg-slate-100">
-            <div class="h-full rounded-full bg-gradient-to-r from-rose-500 to-orange-500" style="width: ${assignedWidth}%"></div>
+            <div class="h-full rounded-full" style="width: ${assignedWidth}%; min-width: ${result.assignmentCount > 0 ? '0.75rem' : '0'}; background: linear-gradient(90deg, #f97316 0%, #ef4444 100%);"></div>
           </div>
         </div>
         <div>
           <div class="mb-2 flex items-center justify-between text-sm font-semibold text-slate-700">
             <span>Expired OTM</span>
-            <span>${result.otmCount} trades</span>
+            <span>${result.otmCount} trades · ${otmLabel}</span>
           </div>
           <div class="h-4 overflow-hidden rounded-full bg-slate-100">
-            <div class="h-full rounded-full bg-gradient-to-r from-emerald-500 to-green-400" style="width: ${otmWidth}%"></div>
+            <div class="h-full rounded-full" style="width: ${otmWidth}%; min-width: ${result.otmCount > 0 ? '0.75rem' : '0'}; background: linear-gradient(90deg, #10b981 0%, #4ade80 100%);"></div>
           </div>
         </div>
       `;
@@ -897,11 +887,6 @@
       const completionNote = result.skippedTailDays > 0
         ? `The final ${result.skippedTailDays} trading day(s) were left out of the trade table because there was not enough time left in the selected range to reach another ${getPresetLabel(settings.expirationPreset)} expiration.`
         : 'The selected range contained enough time to complete every displayed option cycle through the final date.';
-
-      if (!result.premiumEnabled) {
-        els.tailNote.textContent = completionNote;
-        return;
-      }
 
       const performanceNote = result.differenceVsHold >= 0
         ? `Covered call beat hold here because estimated premium (${formatMoney(result.totalPremium)}) was large enough to offset the upside given away at assignments (${formatMoney(result.cappedUpsideAtExpiration)}).`
