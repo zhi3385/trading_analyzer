@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Covered Call Analyzer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    const EXPIRATION_PRESETS = {
+      monthly: {
+        label: 'Monthly 3rd Friday',
+        mode: 'third-friday-months',
+        months: 1
+      },
+      biweekly: {
+        label: 'Bi-weekly Friday',
+        mode: 'friday-weeks',
+        weeks: 2
+      },
+      sixWeek: {
+        label: '6-week Friday',
+        mode: 'friday-weeks',
+        weeks: 6
+      },
+      bimonthly: {
+        label: '2-month 3rd Friday',
+        mode: 'third-friday-months',
+        months: 2
+      }
+    };
+
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            ink: '#111827',
+            cream: '#f8f4ec',
+            ember: '#d97706',
+            moss: '#2f6b57',
+            rose: '#c2410c',
+            slateblue: '#315c75'
+          },
+          fontFamily: {
+            display: ['Space Grotesk', 'sans-serif'],
+            body: ['Manrope', 'sans-serif'],
+            mono: ['IBM Plex Mono', 'monospace']
+          },
+          boxShadow: {
+            card: '0 28px 60px rgba(17, 24, 39, 0.12)'
+          }
+        }
+      }
+    };
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      color-scheme: light;
+      --bg-1: #f8f4ec;
+      --panel: rgba(255, 255, 255, 0.82);
+      --text: #111827;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      min-height: 100vh;
+      margin: 0;
+      font-family: 'Manrope', sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(253, 224, 71, 0.45), transparent 28%),
+        radial-gradient(circle at top right, rgba(96, 165, 250, 0.24), transparent 30%),
+        linear-gradient(180deg, var(--bg-1) 0%, #f4efe4 48%, #eff6ff 100%);
+    }
+
+    .glass {
+      background: var(--panel);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.5);
+      box-shadow: 0 28px 60px rgba(17, 24, 39, 0.08);
+    }
+
+    .metric-card {
+      position: relative;
+      overflow: hidden;
+    }
+
+    .metric-card::before {
+      content: '';
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 4px;
+      background: linear-gradient(90deg, rgba(37, 99, 235, 0.95), rgba(217, 119, 6, 0.95));
+    }
+
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      border-radius: 9999px;
+      padding: 0.35rem 0.75rem;
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }
+
+    .status-assigned {
+      background: rgba(194, 65, 12, 0.12);
+      color: #9a3412;
+    }
+
+    .status-otm {
+      background: rgba(22, 101, 52, 0.12);
+      color: #166534;
+    }
+
+    .summary-strip {
+      background-image:
+        linear-gradient(120deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.1)),
+        linear-gradient(135deg, rgba(49, 92, 117, 0.12), rgba(217, 119, 6, 0.1));
+    }
+
+    .table-wrap {
+      overflow: auto;
+      scrollbar-width: thin;
+    }
+
+    .fade-in {
+      animation: fade-in 340ms ease;
+    }
+
+    @keyframes fade-in {
+      from {
+        opacity: 0;
+        transform: translateY(8px);
+      }
+
+      to {
+        opacity: 1;
+        transform: translateY(0);
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 lg:py-10">
+    <nav class="mb-6 flex flex-wrap items-center gap-3 text-sm font-semibold text-slate-600">
+      <a href="./index.html" class="rounded-full bg-white/70 px-4 py-2 transition hover:bg-white">Home</a>
+      <span class="rounded-full bg-slate-900 px-4 py-2 text-white">Covered Call</span>
+      <a href="./spread_call.html" class="rounded-full bg-white/70 px-4 py-2 transition hover:bg-white">Bull Call Spread</a>
+    </nav>
+
+    <section class="glass overflow-hidden rounded-[2rem] border border-white/50">
+      <div class="grid gap-8 lg:grid-cols-[1.15fr_0.85fr]">
+        <div class="px-6 pb-8 pt-8 sm:px-8 lg:px-10 lg:pb-10 lg:pt-10">
+          <p class="font-mono text-xs uppercase tracking-[0.28em] text-slate-500">Covered Call Backtest</p>
+          <div class="mt-4 max-w-3xl">
+            <h1 class="font-display text-4xl font-bold tracking-tight text-ink sm:text-5xl">Measure premium income against capped upside.</h1>
+            <p class="mt-4 max-w-2xl text-base leading-7 text-slate-600 sm:text-lg">
+              Enter a ticker, pick the history window, then test a serial covered-call program using your chosen expiration cadence and out-of-the-money percentage. If you provide implied volatility, the page estimates premium with Black-Scholes and compares total strategy P/L to simply holding the stock.
+            </p>
+          </div>
+
+          <div class="summary-strip mt-8 grid gap-4 rounded-[1.5rem] border border-slate-200/80 p-5 sm:grid-cols-3">
+            <div>
+              <div class="font-mono text-xs uppercase tracking-[0.24em] text-slate-500">Process</div>
+              <div class="mt-2 text-sm font-semibold text-slate-700">One covered call at a time</div>
+              <div class="mt-1 text-sm text-slate-600">Re-enters after assignment on the next trading day.</div>
+            </div>
+            <div>
+              <div class="font-mono text-xs uppercase tracking-[0.24em] text-slate-500">Assignment Rule</div>
+              <div class="mt-2 text-sm font-semibold text-slate-700">Assigned if close &gt; strike</div>
+              <div class="mt-1 text-sm text-slate-600">Expired OTM otherwise.</div>
+            </div>
+            <div>
+              <div class="font-mono text-xs uppercase tracking-[0.24em] text-slate-500">Sizing</div>
+              <div class="mt-2 text-sm font-semibold text-slate-700">Fixed one contract</div>
+              <div class="mt-1 text-sm text-slate-600">Assumes 100 shares per cycle.</div>
+            </div>
+          </div>
+        </div>
+
+        <aside class="border-t border-slate-200/70 bg-white/40 px-6 py-8 sm:px-8 lg:border-l lg:border-t-0 lg:px-8">
+          <form id="analyzerForm" class="space-y-5">
+            <div class="grid gap-5 sm:grid-cols-2">
+              <label class="block">
+                <span class="mb-2 block text-sm font-semibold text-slate-700">Ticker</span>
+                <input id="tickerInput" name="ticker" type="text" value="SPY" autocomplete="off" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base font-semibold uppercase tracking-[0.08em] shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+              </label>
+              <label class="block">
+                <span class="mb-2 block text-sm font-semibold text-slate-700">Expiration Cadence</span>
+                <select id="expirationPresetInput" name="expirationPreset" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base font-semibold shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+                  <option value="monthly">Monthly 3rd Friday</option>
+                  <option value="biweekly">Bi-weekly Friday</option>
+                  <option value="sixWeek">6-week Friday</option>
+                  <option value="bimonthly">2-month 3rd Friday</option>
+                </select>
+              </label>
+              <label class="block">
+                <span class="mb-2 block text-sm font-semibold text-slate-700">Start Date</span>
+                <input id="startDateInput" name="startDate" type="date" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base font-medium shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+              </label>
+              <label class="block">
+                <span class="mb-2 block text-sm font-semibold text-slate-700">End Date</span>
+                <input id="endDateInput" name="endDate" type="date" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 text-base font-medium shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+              </label>
+              <label class="block">
+                <span class="mb-2 block text-sm font-semibold text-slate-700">OTM Percentage</span>
+                <div class="relative">
+                  <input id="otmInput" name="otm" type="number" min="0" step="0.1" value="5" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-base font-semibold shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+                  <span class="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 font-mono text-sm text-slate-400">%</span>
+                </div>
+              </label>
+              <label class="block">
+                <span class="mb-2 block text-sm font-semibold text-slate-700">IV (optional)</span>
+                <div class="relative">
+                  <input id="ivInput" name="iv" type="text" inputmode="decimal" placeholder="25" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-base font-semibold shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+                  <span class="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 font-mono text-sm text-slate-400">%</span>
+                </div>
+              </label>
+            </div>
+
+            <label class="block">
+              <span class="mb-2 block text-sm font-semibold text-slate-700">Risk-Free Rate</span>
+              <div class="relative">
+                <input id="rateInput" name="rate" type="number" min="0" step="0.01" value="4.25" class="w-full rounded-2xl border border-slate-200 bg-white px-4 py-3 pr-10 text-base font-semibold shadow-sm outline-none transition focus:border-blue-500 focus:ring-4 focus:ring-blue-100">
+                <span class="pointer-events-none absolute right-4 top-1/2 -translate-y-1/2 font-mono text-sm text-slate-400">%</span>
+              </div>
+            </label>
+
+            <div class="rounded-2xl border border-dashed border-slate-300 bg-white/50 p-4 text-sm text-slate-600">
+              Premium and P/L require a user-supplied IV. Without IV, the analyzer still reports each historical call as assigned or expired OTM.
+            </div>
+
+            <div class="flex flex-col gap-3 sm:flex-row">
+              <button type="submit" id="runButton" class="inline-flex items-center justify-center rounded-2xl bg-ink px-5 py-3 text-sm font-bold text-white transition hover:bg-slate-800 focus:outline-none focus:ring-4 focus:ring-slate-300">Run Analysis</button>
+              <button type="button" id="exportButton" class="inline-flex items-center justify-center rounded-2xl border border-slate-300 bg-white px-5 py-3 text-sm font-bold text-slate-700 transition hover:border-slate-400 hover:bg-slate-50 focus:outline-none focus:ring-4 focus:ring-slate-200" disabled>Export CSV</button>
+            </div>
+          </form>
+        </aside>
+      </div>
+    </section>
+
+    <section id="statusBanner" class="mt-6 hidden rounded-2xl border px-4 py-3 text-sm font-medium"></section>
+
+    <section id="errorBanner" class="mt-6 hidden rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"></section>
+
+    <section id="resultsSection" class="mt-8 hidden space-y-6 fade-in">
+      <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5" id="summaryGrid"></div>
+
+      <div class="grid gap-6 xl:grid-cols-[1.05fr_0.95fr]">
+        <article class="glass rounded-[1.75rem] p-6">
+          <div class="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <p class="font-mono text-xs uppercase tracking-[0.24em] text-slate-500">Backtest Notes</p>
+              <h2 class="mt-2 font-display text-2xl font-bold text-ink">Run context</h2>
+            </div>
+            <div id="resultMeta" class="text-right text-sm text-slate-600"></div>
+          </div>
+          <div class="mt-6 grid gap-4 md:grid-cols-2" id="detailCards"></div>
+        </article>
+
+        <article class="glass rounded-[1.75rem] p-6">
+          <p class="font-mono text-xs uppercase tracking-[0.24em] text-slate-500">Outcome Mix</p>
+          <h2 class="mt-2 font-display text-2xl font-bold text-ink">Trade status split</h2>
+          <div class="mt-6 space-y-4" id="statusBreakdown"></div>
+          <div class="mt-6 rounded-2xl border border-slate-200 bg-white/70 p-4 text-sm text-slate-600" id="tailNote"></div>
+        </article>
+      </div>
+
+      <article class="glass rounded-[1.75rem] p-6">
+        <div class="flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p class="font-mono text-xs uppercase tracking-[0.24em] text-slate-500">Trade Ledger</p>
+            <h2 class="mt-2 font-display text-2xl font-bold text-ink">Historical call outcomes</h2>
+          </div>
+          <p class="max-w-2xl text-sm text-slate-600">Each row represents one complete covered-call cycle. Strategy P/L columns appear only when IV is supplied, because the option premium is estimated from your chosen constant volatility input.</p>
+        </div>
+
+        <div class="table-wrap mt-6 rounded-2xl border border-slate-200 bg-white/70">
+          <table class="min-w-full divide-y divide-slate-200 text-sm">
+            <thead class="bg-slate-50/85 text-left text-xs font-bold uppercase tracking-[0.18em] text-slate-500">
+              <tr>
+                <th class="px-4 py-3">Entry</th>
+                <th class="px-4 py-3">Entry Px</th>
+                <th class="px-4 py-3">Expiry</th>
+                <th class="px-4 py-3">Expiry Px</th>
+                <th class="px-4 py-3">Strike</th>
+                <th class="px-4 py-3">Expiry Rule</th>
+                <th class="px-4 py-3">OTM</th>
+                <th class="px-4 py-3">IV</th>
+                <th class="px-4 py-3">Premium</th>
+                <th class="px-4 py-3">Status</th>
+                <th class="px-4 py-3">Trade P/L</th>
+                <th class="px-4 py-3">Cum. Covered Call</th>
+                <th class="px-4 py-3">Cum. Hold</th>
+              </tr>
+            </thead>
+            <tbody id="tradeTableBody" class="divide-y divide-slate-100 bg-white/80"></tbody>
+          </table>
+        </div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const YAHOO_WORKER = 'https://divine-scene-fda6.niels-liu.workers.dev/';
+    const STORAGE_KEY = 'covered-call-history-analyzer:v1';
+    const CONTRACT_SIZE = 100;
+
+    const state = {
+      result: null,
+      settings: null
+    };
+
+    const els = {
+      form: document.getElementById('analyzerForm'),
+      ticker: document.getElementById('tickerInput'),
+      startDate: document.getElementById('startDateInput'),
+      endDate: document.getElementById('endDateInput'),
+      expirationPreset: document.getElementById('expirationPresetInput'),
+      otm: document.getElementById('otmInput'),
+      iv: document.getElementById('ivInput'),
+      rate: document.getElementById('rateInput'),
+      runButton: document.getElementById('runButton'),
+      exportButton: document.getElementById('exportButton'),
+      statusBanner: document.getElementById('statusBanner'),
+      errorBanner: document.getElementById('errorBanner'),
+      resultsSection: document.getElementById('resultsSection'),
+      summaryGrid: document.getElementById('summaryGrid'),
+      detailCards: document.getElementById('detailCards'),
+      tradeTableBody: document.getElementById('tradeTableBody'),
+      resultMeta: document.getElementById('resultMeta'),
+      statusBreakdown: document.getElementById('statusBreakdown'),
+      tailNote: document.getElementById('tailNote')
+    };
+
+    function setDefaultDates() {
+      const end = new Date();
+      const start = new Date(end.getTime());
+      start.setFullYear(start.getFullYear() - 1);
+      els.endDate.value = toDateInputValue(end);
+      els.startDate.value = toDateInputValue(start);
+    }
+
+    function toDateInputValue(date) {
+      return new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())).toISOString().slice(0, 10);
+    }
+
+    function parseDateInput(value) {
+      const [year, month, day] = value.split('-').map(Number);
+      return new Date(Date.UTC(year, month - 1, day));
+    }
+
+    function addDays(date, days) {
+      return new Date(date.getTime() + days * 24 * 60 * 60 * 1000);
+    }
+
+    function startOfUtcDay(date) {
+      return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
+    }
+
+    function addUtcMonths(date, months) {
+      return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + months, date.getUTCDate()));
+    }
+
+    function getThirdFriday(year, monthIndex) {
+      const firstDay = new Date(Date.UTC(year, monthIndex, 1));
+      const firstWeekday = firstDay.getUTCDay();
+      const daysUntilFriday = (5 - firstWeekday + 7) % 7;
+      return new Date(Date.UTC(year, monthIndex, 1 + daysUntilFriday + 14));
+    }
+
+    function getPresetLabel(presetKey) {
+      return EXPIRATION_PRESETS[presetKey] ? EXPIRATION_PRESETS[presetKey].label : presetKey;
+    }
+
+    function getTargetExpirationDate(entryDate, presetKey) {
+      const preset = EXPIRATION_PRESETS[presetKey];
+      if (!preset) {
+        return null;
+      }
+
+      const normalizedEntry = startOfUtcDay(entryDate);
+
+      if (preset.mode === 'friday-weeks') {
+        const firstFriday = addDays(normalizedEntry, (5 - normalizedEntry.getUTCDay() + 7) % 7);
+        return addDays(firstFriday, (preset.weeks - 1) * 7);
+      }
+
+      const baseMonthDate = addUtcMonths(normalizedEntry, preset.months - 1);
+      let expiration = getThirdFriday(baseMonthDate.getUTCFullYear(), baseMonthDate.getUTCMonth());
+
+      if (expiration < normalizedEntry) {
+        const nextMonthDate = addUtcMonths(normalizedEntry, preset.months);
+        expiration = getThirdFriday(nextMonthDate.getUTCFullYear(), nextMonthDate.getUTCMonth());
+      }
+
+      return expiration;
+    }
+
+    function formatDate(dateLike) {
+      const date = dateLike instanceof Date ? dateLike : new Date(dateLike);
+      return date.toISOString().slice(0, 10);
+    }
+
+    function formatMoney(value) {
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        return 'N/A';
+      }
+      return new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: 'USD',
+        maximumFractionDigits: 2
+      }).format(value);
+    }
+
+    function formatSignedMoney(value) {
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        return 'N/A';
+      }
+      const prefix = value > 0 ? '+' : '';
+      return `${prefix}${formatMoney(value)}`;
+    }
+
+    function formatPercent(value) {
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        return 'N/A';
+      }
+      return `${Number(value).toFixed(2)}%`;
+    }
+
+    function formatVolPercent(value, emptyLabel = 'N/A') {
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        return emptyLabel;
+      }
+      return `${(value * 100).toFixed(1)}%`;
+    }
+
+    function setStatus(message, tone) {
+      const tones = {
+        info: 'border-blue-200 bg-blue-50 text-blue-700',
+        success: 'border-emerald-200 bg-emerald-50 text-emerald-700'
+      };
+      els.statusBanner.className = `mt-6 rounded-2xl border px-4 py-3 text-sm font-medium ${tones[tone] || tones.info}`;
+      els.statusBanner.textContent = message;
+      els.statusBanner.classList.remove('hidden');
+    }
+
+    function clearStatus() {
+      els.statusBanner.classList.add('hidden');
+      els.statusBanner.textContent = '';
+    }
+
+    function showError(message) {
+      els.errorBanner.textContent = message;
+      els.errorBanner.classList.remove('hidden');
+    }
+
+    function clearError() {
+      els.errorBanner.classList.add('hidden');
+      els.errorBanner.textContent = '';
+    }
+
+    async function fetchYahooData(endpoint) {
+      const response = await fetch(`${YAHOO_WORKER}${endpoint}`);
+      if (!response.ok) {
+        throw new Error(`Worker returned ${response.status}`);
+      }
+
+      const json = await response.json();
+      if (json.chart && json.chart.error) {
+        throw new Error(json.chart.error.description || 'Yahoo chart request failed');
+      }
+      if (json.finance && json.finance.error) {
+        throw new Error(json.finance.error.description || 'Yahoo finance request failed');
+      }
+      return json;
+    }
+
+    async function fetchHistoricalPrices(ticker, startDate, endDate) {
+      const start = Math.floor(startDate.getTime() / 1000);
+      const endExclusive = Math.floor(addDays(endDate, 1).getTime() / 1000);
+      const endpoint = `v8/finance/chart/${encodeURIComponent(ticker)}?period1=${start}&period2=${endExclusive}&interval=1d&includePrePost=false&events=div%2Csplits`;
+      const json = await fetchYahooData(endpoint);
+      const result = json.chart && json.chart.result ? json.chart.result[0] : null;
+      if (!result) {
+        throw new Error('No historical data returned for this ticker.');
+      }
+
+      const timestamps = result.timestamp || [];
+      const closes = (((result.indicators || {}).quote || [])[0] || {}).close || [];
+      const prices = [];
+
+      for (let index = 0; index < timestamps.length; index += 1) {
+        const close = closes[index];
+        if (!Number.isFinite(close)) {
+          continue;
+        }
+        const timestamp = timestamps[index] * 1000;
+        prices.push({
+          date: new Date(timestamp),
+          timestamp,
+          close: roundTo(close, 2)
+        });
+      }
+
+      if (prices.length < 2) {
+        throw new Error('Not enough daily data was returned for the selected range.');
+      }
+
+      return {
+        meta: result.meta || {},
+        prices
+      };
+    }
+
+    function roundTo(value, places) {
+      const factor = 10 ** places;
+      return Math.round((value + Number.EPSILON) * factor) / factor;
+    }
+
+    function getCoveredCallStrike(targetPrice) {
+      const increment = targetPrice >= 100 ? 5 : 1;
+      return Math.ceil(targetPrice / increment) * increment;
+    }
+
+    function erf(x) {
+      const sign = x < 0 ? -1 : 1;
+      const absX = Math.abs(x);
+      const a1 = 0.254829592;
+      const a2 = -0.284496736;
+      const a3 = 1.421413741;
+      const a4 = -1.453152027;
+      const a5 = 1.061405429;
+      const p = 0.3275911;
+      const t = 1 / (1 + p * absX);
+      const y = 1 - (((((a5 * t + a4) * t) + a3) * t + a2) * t + a1) * t * Math.exp(-absX * absX);
+      return sign * y;
+    }
+
+    function normCdf(x) {
+      return 0.5 * (1 + erf(x / Math.sqrt(2)));
+    }
+
+    function blackScholesCallPrice(spot, strike, daysToExpiry, volatility, riskFreeRate) {
+      const time = daysToExpiry / 365;
+      if (time <= 0) {
+        return Math.max(spot - strike, 0);
+      }
+      if (volatility <= 0) {
+        return Math.max(spot - strike * Math.exp(-riskFreeRate * time), 0);
+      }
+      const sqrtTime = Math.sqrt(time);
+      const d1 = (Math.log(spot / strike) + (riskFreeRate + (volatility * volatility) / 2) * time) / (volatility * sqrtTime);
+      const d2 = d1 - volatility * sqrtTime;
+      return spot * normCdf(d1) - strike * Math.exp(-riskFreeRate * time) * normCdf(d2);
+    }
+
+    function validateSettings(settings) {
+      if (!/^[A-Za-z.\-]{1,10}$/.test(settings.ticker)) {
+        throw new Error('Ticker must contain only letters, dot, or dash.');
+      }
+      if (settings.startDate >= settings.endDate) {
+        throw new Error('Start date must be earlier than end date.');
+      }
+      if (!EXPIRATION_PRESETS[settings.expirationPreset]) {
+        throw new Error('Choose a valid expiration cadence.');
+      }
+      if (!Number.isFinite(settings.otmPercent) || settings.otmPercent < 0) {
+        throw new Error('OTM percentage must be zero or greater.');
+      }
+      if (settings.iv !== null && (!Number.isFinite(settings.iv) || settings.iv <= 0)) {
+        throw new Error('IV must be greater than zero when provided.');
+      }
+      if (!Number.isFinite(settings.riskFreeRate) || settings.riskFreeRate < 0) {
+        throw new Error('Risk-free rate must be zero or greater.');
+      }
+    }
+
+    function parseOptionalPercentInput(rawValue) {
+      const trimmed = rawValue.trim();
+      if (!trimmed) {
+        return null;
+      }
+
+      const normalized = trimmed.replace(/,/g, '');
+      if (!/^(?:\d+|\d+\.\d+|\.\d+)$/.test(normalized)) {
+        throw new Error('IV must be a valid positive number when provided.');
+      }
+
+      return Number.parseFloat(normalized) / 100;
+    }
+
+    function getSettingsFromForm() {
+      return {
+        ticker: els.ticker.value.trim().toUpperCase(),
+        startDate: parseDateInput(els.startDate.value),
+        endDate: parseDateInput(els.endDate.value),
+        expirationPreset: els.expirationPreset.value,
+        otmPercent: Number.parseFloat(els.otm.value),
+        iv: parseOptionalPercentInput(els.iv.value),
+        riskFreeRate: Number.parseFloat(els.rate.value) / 100
+      };
+    }
+
+    function saveSettings(settings) {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        ticker: settings.ticker,
+        startDate: formatDate(settings.startDate),
+        endDate: formatDate(settings.endDate),
+        expirationPreset: settings.expirationPreset,
+        otmPercent: settings.otmPercent,
+        iv: settings.iv === null ? '' : roundTo(settings.iv * 100, 2),
+        riskFreeRate: roundTo(settings.riskFreeRate * 100, 2)
+      }));
+    }
+
+    function loadSettings() {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) {
+        return;
+      }
+      try {
+        const saved = JSON.parse(raw);
+        if (saved.ticker) {
+          els.ticker.value = saved.ticker;
+        }
+        if (saved.startDate) {
+          els.startDate.value = saved.startDate;
+        }
+        if (saved.endDate) {
+          els.endDate.value = saved.endDate;
+        }
+        if (saved.expirationPreset && EXPIRATION_PRESETS[saved.expirationPreset]) {
+          els.expirationPreset.value = saved.expirationPreset;
+        }
+        if (saved.otmPercent !== undefined) {
+          els.otm.value = saved.otmPercent;
+        }
+        if (saved.iv !== undefined) {
+          els.iv.value = saved.iv;
+        }
+        if (saved.riskFreeRate !== undefined) {
+          els.rate.value = saved.riskFreeRate;
+        }
+      } catch (error) {
+        console.warn('Could not load saved settings.', error);
+      }
+    }
+
+    function findExpirationIndex(prices, entryIndex, expirationPreset) {
+      const target = getTargetExpirationDate(prices[entryIndex].date, expirationPreset);
+      if (!target) {
+        return -1;
+      }
+      for (let index = entryIndex + 1; index < prices.length; index += 1) {
+        if (prices[index].timestamp >= target.getTime()) {
+          return index;
+        }
+      }
+      return -1;
+    }
+
+    function runBacktest(prices, settings) {
+      const trades = [];
+      const firstPrice = prices[0].close;
+      const finalPrice = prices[prices.length - 1].close;
+      const premiumEnabled = settings.iv !== null;
+      let index = 0;
+      let cash = 0;
+      let shares = 0;
+      let totalPremium = 0;
+      let assignmentCount = 0;
+      let otmCount = 0;
+      let cappedUpsideAtExpiration = 0;
+      let skippedTailDays = 0;
+      let portfolioValue = 0;
+
+      while (index < prices.length - 1) {
+        const entry = prices[index];
+        const targetExpirationDate = getTargetExpirationDate(entry.date, settings.expirationPreset);
+        const expiryIndex = findExpirationIndex(prices, index, settings.expirationPreset);
+        if (expiryIndex === -1) {
+          skippedTailDays = prices.length - index - 1;
+          break;
+        }
+
+        if (shares === 0) {
+          cash -= entry.close * CONTRACT_SIZE;
+          shares = CONTRACT_SIZE;
+        }
+
+        const startValue = cash + shares * entry.close;
+        const expiry = prices[expiryIndex];
+        const calendarDaysToExpiry = Math.max(1, Math.round((startOfUtcDay(targetExpirationDate).getTime() - startOfUtcDay(entry.date).getTime()) / (24 * 60 * 60 * 1000)));
+        const rawStrikeTarget = entry.close * (1 + settings.otmPercent / 100);
+        const strike = getCoveredCallStrike(rawStrikeTarget);
+        const assigned = expiry.close > strike;
+        const premiumPerShare = premiumEnabled
+          ? blackScholesCallPrice(entry.close, strike, calendarDaysToExpiry, settings.iv, settings.riskFreeRate)
+          : null;
+        const premiumCollected = premiumEnabled ? roundTo(premiumPerShare * CONTRACT_SIZE, 2) : null;
+
+        if (premiumEnabled) {
+          cash += premiumCollected;
+          totalPremium += premiumCollected;
+        }
+
+        if (assigned) {
+          cappedUpsideAtExpiration += Math.max(expiry.close - strike, 0) * CONTRACT_SIZE;
+          cash += strike * CONTRACT_SIZE;
+          shares = 0;
+          assignmentCount += 1;
+        } else {
+          otmCount += 1;
+        }
+
+        portfolioValue = cash + shares * expiry.close;
+        const tradeProfit = premiumEnabled ? roundTo(portfolioValue - startValue, 2) : null;
+        const holdValueAtExpiry = roundTo((expiry.close - firstPrice) * CONTRACT_SIZE, 2);
+
+        trades.push({
+          entryDate: entry.date,
+          entryClose: entry.close,
+          expirationDate: expiry.date,
+          expirationClose: expiry.close,
+          strike,
+          expirationPresetLabel: getPresetLabel(settings.expirationPreset),
+          calendarDaysToExpiry,
+          otmPercent: settings.otmPercent,
+          iv: settings.iv,
+          premiumCollected,
+          status: assigned ? 'Assigned' : 'Expired OTM',
+          tradeProfit,
+          cumulativeStrategyPL: premiumEnabled ? roundTo(portfolioValue, 2) : null,
+          cumulativeHoldPL: holdValueAtExpiry
+        });
+
+        index = expiryIndex + 1;
+      }
+
+      const finalPortfolioValue = premiumEnabled ? roundTo(cash + shares * finalPrice, 2) : null;
+      const holdFinalPL = roundTo((finalPrice - firstPrice) * CONTRACT_SIZE, 2);
+      const strategyVsHold = premiumEnabled ? roundTo(finalPortfolioValue - holdFinalPL, 2) : null;
+      const missedUpside = premiumEnabled ? roundTo(Math.max(holdFinalPL - finalPortfolioValue, 0), 2) : null;
+
+      return {
+        trades,
+        premiumEnabled,
+        totalPremium: premiumEnabled ? roundTo(totalPremium, 2) : null,
+        totalCoveredCallPL: finalPortfolioValue,
+        totalHoldPL: holdFinalPL,
+        differenceVsHold: strategyVsHold,
+        missedUpside,
+        cappedUpsideAtExpiration: premiumEnabled ? roundTo(cappedUpsideAtExpiration, 2) : null,
+        assignmentCount,
+        otmCount,
+        skippedTailDays,
+        startPrice: firstPrice,
+        endPrice: finalPrice,
+        totalTradingDays: prices.length,
+        finalDate: prices[prices.length - 1].date
+      };
+    }
+
+    function renderSummary(result, settings, meta) {
+      const assignmentRate = result.trades.length ? (result.assignmentCount / result.trades.length) * 100 : 0;
+      const cards = [
+        {
+          label: 'Completed Cycles',
+          value: String(result.trades.length),
+          note: `${result.totalTradingDays} daily closes analyzed`
+        },
+        {
+          label: 'Assigned',
+          value: String(result.assignmentCount),
+          note: formatPercent(assignmentRate)
+        },
+        {
+          label: 'Expired OTM',
+          value: String(result.otmCount),
+          note: `${Math.max(result.trades.length - result.assignmentCount, 0)} kept the shares`
+        },
+        {
+          label: 'Premium Collected',
+          value: result.premiumEnabled ? formatMoney(result.totalPremium) : 'Status only',
+          note: result.premiumEnabled ? `${formatVolPercent(settings.iv)} constant IV model` : 'IV not provided'
+        },
+        {
+          label: 'Covered Call vs Hold',
+          value: result.premiumEnabled ? formatSignedMoney(result.differenceVsHold) : 'Status only',
+          note: result.premiumEnabled ? `${formatMoney(result.totalCoveredCallPL)} vs ${formatMoney(result.totalHoldPL)}` : 'P/L not modeled without IV'
+        }
+      ];
+
+      els.summaryGrid.innerHTML = cards.map((card) => `
+        <article class="metric-card glass rounded-[1.5rem] p-5">
+          <p class="font-mono text-xs uppercase tracking-[0.2em] text-slate-500">${card.label}</p>
+          <p class="mt-4 font-display text-3xl font-bold tracking-tight text-ink">${card.value}</p>
+          <p class="mt-2 text-sm text-slate-600">${card.note}</p>
+        </article>
+      `).join('');
+
+      els.resultMeta.innerHTML = `
+        <div class="font-semibold text-slate-700">${meta.longName || settings.ticker}</div>
+        <div>${formatDate(settings.startDate)} to ${formatDate(settings.endDate)}</div>
+        <div>Start ${formatMoney(result.startPrice)} | End ${formatMoney(result.endPrice)}</div>
+      `;
+
+      const detailCards = [
+        {
+          title: 'Trade recipe',
+          lines: [
+            getPresetLabel(settings.expirationPreset),
+            `${formatPercent(settings.otmPercent)} OTM`,
+            '1 contract / 100 shares'
+          ]
+        },
+        {
+          title: 'Valuation mode',
+          lines: result.premiumEnabled
+            ? [
+                `IV: ${formatVolPercent(settings.iv)}`,
+                `Risk-free rate: ${formatPercent(settings.riskFreeRate * 100)}`,
+                'Black-Scholes call estimate using target expiration'
+              ]
+            : [
+                'Status-only mode',
+                'IV not provided',
+                'Premium and P/L are not modeled'
+              ]
+        },
+        {
+          title: 'Benchmark',
+          lines: [
+            'Buy 100 shares on first entry date',
+            'Hold through final selected date',
+            `Ending hold P/L: ${formatMoney(result.totalHoldPL)}`
+          ]
+        },
+        {
+          title: 'Upside trade-off',
+          lines: result.premiumEnabled
+            ? [
+                `Missed upside vs hold: ${formatMoney(result.missedUpside)}`,
+                `Upside lost at assigned expirations: ${formatMoney(result.cappedUpsideAtExpiration)}`,
+                'Positive values indicate capped upside cost',
+                'Zero means strategy did not trail hold'
+              ]
+            : [
+                'Unavailable without IV',
+                'Premium is required for total strategy P/L',
+                'Status history remains valid'
+              ]
+        }
+      ];
+
+      els.detailCards.innerHTML = detailCards.map((card) => `
+        <div class="rounded-2xl border border-slate-200 bg-white/70 p-4">
+          <h3 class="text-sm font-bold uppercase tracking-[0.16em] text-slate-500">${card.title}</h3>
+          <div class="mt-3 space-y-2 text-sm text-slate-700">${card.lines.map((line) => `<div>${line}</div>`).join('')}</div>
+        </div>
+      `).join('');
+
+      const totalTrades = Math.max(result.trades.length, 1);
+      const assignedWidth = (result.assignmentCount / totalTrades) * 100;
+      const otmWidth = (result.otmCount / totalTrades) * 100;
+
+      els.statusBreakdown.innerHTML = `
+        <div>
+          <div class="mb-2 flex items-center justify-between text-sm font-semibold text-slate-700">
+            <span>Assigned</span>
+            <span>${result.assignmentCount} trades</span>
+          </div>
+          <div class="h-4 overflow-hidden rounded-full bg-slate-100">
+            <div class="h-full rounded-full bg-gradient-to-r from-rose-500 to-orange-500" style="width: ${assignedWidth}%"></div>
+          </div>
+        </div>
+        <div>
+          <div class="mb-2 flex items-center justify-between text-sm font-semibold text-slate-700">
+            <span>Expired OTM</span>
+            <span>${result.otmCount} trades</span>
+          </div>
+          <div class="h-4 overflow-hidden rounded-full bg-slate-100">
+            <div class="h-full rounded-full bg-gradient-to-r from-emerald-500 to-green-400" style="width: ${otmWidth}%"></div>
+          </div>
+        </div>
+      `;
+
+      const completionNote = result.skippedTailDays > 0
+        ? `The final ${result.skippedTailDays} trading day(s) were left out of the trade table because there was not enough time left in the selected range to reach another ${getPresetLabel(settings.expirationPreset)} expiration.`
+        : 'The selected range contained enough time to complete every displayed option cycle through the final date.';
+
+      if (!result.premiumEnabled) {
+        els.tailNote.textContent = completionNote;
+        return;
+      }
+
+      const performanceNote = result.differenceVsHold >= 0
+        ? `Covered call beat hold here because estimated premium (${formatMoney(result.totalPremium)}) was large enough to offset the upside given away at assignments (${formatMoney(result.cappedUpsideAtExpiration)}).`
+        : `Hold beat covered call here because the upside given away at assignments (${formatMoney(result.cappedUpsideAtExpiration)}) was larger than the estimated premium collected (${formatMoney(result.totalPremium)}).`;
+
+      els.tailNote.textContent = `${performanceNote} ${completionNote}`;
+    }
+
+    function renderTrades(result) {
+      if (!result.trades.length) {
+        els.tradeTableBody.innerHTML = `
+          <tr>
+            <td colspan="13" class="px-4 py-10 text-center text-sm text-slate-500">No full option cycles fit inside the selected date range. Increase the range or choose a shorter expiration cadence.</td>
+          </tr>
+        `;
+        return;
+      }
+
+      els.tradeTableBody.innerHTML = result.trades.map((trade) => {
+        const statusClass = trade.status === 'Assigned' ? 'status-assigned' : 'status-otm';
+        const tradeProfitClass = trade.tradeProfit !== null && trade.tradeProfit >= 0 ? 'text-green-700' : 'text-red-700';
+        const cumulativeClass = trade.cumulativeStrategyPL !== null && trade.cumulativeStrategyPL >= trade.cumulativeHoldPL ? 'text-green-700' : 'text-red-700';
+
+        return `
+          <tr class="hover:bg-amber-50/40">
+            <td class="whitespace-nowrap px-4 py-3 font-semibold text-slate-800">${formatDate(trade.entryDate)}</td>
+            <td class="whitespace-nowrap px-4 py-3 font-mono text-slate-700">${formatMoney(trade.entryClose)}</td>
+            <td class="whitespace-nowrap px-4 py-3 font-semibold text-slate-800">${formatDate(trade.expirationDate)}</td>
+            <td class="whitespace-nowrap px-4 py-3 font-mono text-slate-700">${formatMoney(trade.expirationClose)}</td>
+            <td class="whitespace-nowrap px-4 py-3 font-mono text-slate-700">${formatMoney(trade.strike)}</td>
+            <td class="px-4 py-3 text-slate-700">${trade.expirationPresetLabel}<div class="mt-1 font-mono text-xs text-slate-400">${trade.calendarDaysToExpiry} cal days</div></td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-700">${formatPercent(trade.otmPercent)}</td>
+            <td class="whitespace-nowrap px-4 py-3 text-slate-700">${formatVolPercent(trade.iv, 'Not provided')}</td>
+            <td class="whitespace-nowrap px-4 py-3 font-mono text-slate-700">${trade.premiumCollected === null ? 'Not modeled' : formatMoney(trade.premiumCollected)}</td>
+            <td class="whitespace-nowrap px-4 py-3"><span class="status-pill ${statusClass}">${trade.status}</span></td>
+            <td class="whitespace-nowrap px-4 py-3 font-mono font-semibold ${tradeProfitClass}">${formatSignedMoney(trade.tradeProfit)}</td>
+            <td class="whitespace-nowrap px-4 py-3 font-mono font-semibold ${cumulativeClass}">${formatSignedMoney(trade.cumulativeStrategyPL)}</td>
+            <td class="whitespace-nowrap px-4 py-3 font-mono text-slate-700">${formatSignedMoney(trade.cumulativeHoldPL)}</td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    function renderResult(settings, meta, result) {
+      renderSummary(result, settings, meta);
+      renderTrades(result);
+      els.resultsSection.classList.remove('hidden');
+      els.exportButton.disabled = !result.trades.length;
+    }
+
+    function toCsvValue(value) {
+      if (value === null || value === undefined) {
+        return '';
+      }
+      const stringValue = String(value);
+      if (/[",\n]/.test(stringValue)) {
+        return `"${stringValue.replace(/"/g, '""')}"`;
+      }
+      return stringValue;
+    }
+
+    function exportCsv() {
+      if (!state.result || !state.settings) {
+        return;
+      }
+
+      const { result, settings } = state;
+      const lines = [];
+      lines.push(['Ticker', settings.ticker].map(toCsvValue).join(','));
+      lines.push(['Start Date', formatDate(settings.startDate)].map(toCsvValue).join(','));
+      lines.push(['End Date', formatDate(settings.endDate)].map(toCsvValue).join(','));
+      lines.push(['Expiration Preset', getPresetLabel(settings.expirationPreset)].map(toCsvValue).join(','));
+      lines.push(['OTM Percent', settings.otmPercent].map(toCsvValue).join(','));
+      lines.push(['IV Percent', settings.iv === null ? '' : roundTo(settings.iv * 100, 2)].map(toCsvValue).join(','));
+      lines.push(['Risk Free Rate Percent', roundTo(settings.riskFreeRate * 100, 2)].map(toCsvValue).join(','));
+      lines.push(['Total Premium', result.totalPremium].map(toCsvValue).join(','));
+      lines.push(['Covered Call PL', result.totalCoveredCallPL].map(toCsvValue).join(','));
+      lines.push(['Hold PL', result.totalHoldPL].map(toCsvValue).join(','));
+      lines.push(['Difference vs Hold', result.differenceVsHold].map(toCsvValue).join(','));
+      lines.push([]);
+      lines.push([
+        'Entry Date',
+        'Entry Price',
+        'Expiration Date',
+        'Expiration Price',
+        'Strike',
+        'Expiration Preset',
+        'Calendar Days to Expiration',
+        'OTM Percent',
+        'IV Decimal',
+        'Premium Collected',
+        'Status',
+        'Trade PL',
+        'Cumulative Covered Call PL',
+        'Cumulative Hold PL'
+      ].map(toCsvValue).join(','));
+
+      result.trades.forEach((trade) => {
+        lines.push([
+          formatDate(trade.entryDate),
+          trade.entryClose,
+          formatDate(trade.expirationDate),
+          trade.expirationClose,
+          trade.strike,
+          trade.expirationPresetLabel,
+          trade.calendarDaysToExpiry,
+          trade.otmPercent,
+          trade.iv,
+          trade.premiumCollected,
+          trade.status,
+          trade.tradeProfit,
+          trade.cumulativeStrategyPL,
+          trade.cumulativeHoldPL
+        ].map(toCsvValue).join(','));
+      });
+
+      const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `${settings.ticker}_covered_call_history.csv`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    async function handleSubmit(event) {
+      event.preventDefault();
+      clearError();
+      clearStatus();
+      els.resultsSection.classList.add('hidden');
+      els.exportButton.disabled = true;
+
+      try {
+        const settings = getSettingsFromForm();
+        validateSettings(settings);
+        saveSettings(settings);
+        setStatus(`Fetching ${settings.ticker} daily history and running the covered-call backtest...`, 'info');
+
+        els.runButton.disabled = true;
+        els.runButton.textContent = 'Running...';
+
+        const historical = await fetchHistoricalPrices(settings.ticker, settings.startDate, settings.endDate);
+        const result = runBacktest(historical.prices, settings);
+        state.result = result;
+        state.settings = settings;
+
+        renderResult(settings, historical.meta, result);
+        setStatus(`Backtest complete: ${result.trades.length} cycle(s) processed for ${settings.ticker}.`, 'success');
+      } catch (error) {
+        console.error(error);
+        showError(error.message || 'The analysis failed.');
+      } finally {
+        els.runButton.disabled = false;
+        els.runButton.textContent = 'Run Analysis';
+      }
+    }
+
+    function initialize() {
+      setDefaultDates();
+      loadSettings();
+      els.form.addEventListener('submit', handleSubmit);
+      els.exportButton.addEventListener('click', exportCsv);
+    }
+
+    initialize();
+  </script>
+</body>
+</html>
